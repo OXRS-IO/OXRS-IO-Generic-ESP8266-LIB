@@ -36,6 +36,9 @@ DynamicJsonDocument _fwCommandSchema(JSON_COMMAND_MAX_SIZE);
 jsonCallback _onConfig;
 jsonCallback _onCommand;
 
+// Home Assistant discovery config
+bool _hassDiscoveryEnabled = false;
+
 // stack size counter (for determine used heap size on ESP8266)
 char * _stack_start;
 
@@ -222,6 +225,17 @@ void _mqttDisconnected(int state)
 
 void _mqttConfig(JsonVariant json)
 {
+  // Home Assistant discovery config
+  if (json.containsKey("hassDiscoveryEnabled"))
+  {
+    _hassDiscoveryEnabled = json["hassDiscoveryEnabled"].as<bool>();
+  }
+
+  if (json.containsKey("hassDiscoveryTopicPrefix"))
+  {
+    _mqtt.setHassDiscoveryTopicPrefix(json["hassDiscoveryTopicPrefix"]);
+  }
+
   // Pass on to the firmware callback
   if (_onConfig) { _onConfig(json); }
 }
@@ -260,31 +274,6 @@ void _mqttCallback(char * topic, byte * payload, int length)
 }
 
 /* Main program */
-void OXRS_8266::setMqttBroker(const char * broker, uint16_t port)
-{
-  _mqtt.setBroker(broker, port);
-}
-
-void OXRS_8266::setMqttClientId(const char * clientId)
-{
-  _mqtt.setClientId(clientId);
-}
-
-void OXRS_8266::setMqttAuth(const char * username, const char * password)
-{
-  _mqtt.setAuth(username, password);
-}
-
-void OXRS_8266::setMqttTopicPrefix(const char * prefix)
-{
-  _mqtt.setTopicPrefix(prefix);
-}
-
-void OXRS_8266::setMqttTopicSuffix(const char * suffix)
-{
-  _mqtt.setTopicSuffix(suffix);
-}
-
 void OXRS_8266::begin(jsonCallback config, jsonCallback command)
 {
   // Store the address of the stack at startup so we can determine
@@ -342,14 +331,14 @@ void OXRS_8266::setCommandSchema(JsonVariant json)
   _mergeJson(_fwCommandSchema.as<JsonVariant>(), json);
 }
 
-void OXRS_8266::apiGet(const char * path, Router::Middleware * middleware)
+OXRS_MQTT * OXRS_8266::getMQTT()
 {
-  _api.get(path, middleware);
+  return &_mqtt;
 }
 
-void OXRS_8266::apiPost(const char * path, Router::Middleware * middleware)
+OXRS_API * OXRS_8266::getAPI()
 {
-  _api.post(path, middleware);
+  return &_api;
 }
 
 bool OXRS_8266::publishStatus(JsonVariant json)
@@ -364,6 +353,32 @@ bool OXRS_8266::publishTelemetry(JsonVariant json)
   // Exit early if no network connection
   if (!_isNetworkConnected()) { return false; }
   return _mqtt.publishTelemetry(json);
+}
+
+bool OXRS_8266::isHassDiscoveryEnabled()
+{
+  return _hassDiscoveryEnabled;
+}
+
+void OXRS_8266::getHassDiscoveryJson(JsonVariant json, char * id)
+{
+  _mqtt.getHassDiscoveryJson(json, id);
+
+  // Update the firmware details
+  json["dev"]["mf"] = FW_MAKER;
+  json["dev"]["mdl"] = FW_NAME;
+  json["dev"]["sw"] = STRINGIFY(FW_VERSION);
+  json["dev"]["hw"] = "ESP8266";
+}
+
+bool OXRS_8266::publishHassDiscovery(JsonVariant json, char * component, char * id)
+{
+  // Exit early if Home Assistant discovery not enabled
+  if (!_hassDiscoveryEnabled) { return false; }
+
+  // Exit early if no network connection
+  if (!_isNetworkConnected()) { return false; }
+  return _mqtt.publishHassDiscovery(json, component, id);
 }
 
 size_t OXRS_8266::write(uint8_t character)
